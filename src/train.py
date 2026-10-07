@@ -1,7 +1,11 @@
-"""Obligor probability-of-default model with an internal rating-grade map.
+"""Issuer financial-risk model for a ratings-style research desk.
 
-Trains on the UCI Statlog German Credit dataset (1,000 obligors).
-Grades are an internal research scale for analyst review. They are not agency ratings.
+447 corporate issuers. Features follow the financial ratios CRISIL Ratings
+names in its public criteria (gearing, interest coverage, profitability,
+liquidity, scale), plus sector as the industry-risk input.
+
+The grade is a financial-risk notch only. It is not a CRISIL, S&P or Moody's rating.
+Parent support, management and project risk are stated as gaps in every note.
 """
 import json
 from pathlib import Path
@@ -9,147 +13,245 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import brier_score_loss, roc_auc_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder
 from xgboost import XGBClassifier
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "german.data"
-OUT = ROOT / "reports" / "metrics.json"
+DATA = ROOT / "data" / "credit_rating_training_data.csv"
+REPORTS = ROOT / "reports"
 
-COLS = [
-    "checking_status",
-    "duration_months",
-    "credit_history",
-    "purpose",
-    "credit_amount",
-    "savings",
-    "employment_since",
-    "installment_rate",
-    "personal_status",
-    "other_debtors",
-    "residence_since",
-    "property",
-    "age_years",
-    "other_installment_plans",
-    "housing",
-    "existing_credits",
-    "job",
-    "dependents",
-    "telephone",
-    "foreign_worker",
-    "label",
+# Major notches. Plus/minus modifiers are folded in so a 447-row file can support a split.
+NOTCHES = ["AA_up", "A", "BBB", "BB", "B", "CCC_down"]
+NOTCH_LABEL = {
+    "AA_up": "AA and above",
+    "A": "A",
+    "BBB": "BBB",
+    "BB": "BB",
+    "B": "B",
+    "CCC_down": "CCC and below",
+}
+
+RATIO_COLS = [
+    "debt_to_equity",
+    "interest_coverage",
+    "debt_to_ebitda",
+    "current_ratio",
+    "net_margin",
+    "roa",
+    "log_assets",
 ]
 
-NOTCHES = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC", "D"]
+# How each column maps onto CRISIL's published financial-risk parameters.
+# DSCR, NCATD and net worth are not in this file. RoCE is approximated by ROA.
+RATIO_ROLE = {
+    "debt_to_equity": "capital structure (gearing)",
+    "interest_coverage": "interest coverage",
+    "debt_to_ebitda": "debt burden versus operating earnings",
+    "current_ratio": "liquidity (current ratio)",
+    "net_margin": "profitability",
+    "roa": "return on assets (stand-in for RoCE)",
+    "log_assets": "scale",
+}
+
+GAPS = (
+    "Debt service coverage, net cash accrual to total debt, and net worth are not in the file. "
+    "Parent or group support, management risk, project risk and accounting quality are outside this model. "
+    "CRISIL Ratings does not assign a rating from ratios alone."
+)
 
 
-def grade_from_pd(p, cuts):
-    for cut, grade in zip(cuts, NOTCHES[:-1]):
-        if p < cut:
-            return grade
-    return "D"
+def to_major(rating: str) -> str:
+    r = str(rating).strip().upper().replace(" ", "")
+    if r in {"AAA", "AA+", "AA", "AA-"}:
+        return "AA_up"
+    if r in {"A+", "A", "A-"}:
+        return "A"
+    if r in {"BBB+", "BBB", "BBB-"}:
+        return "BBB"
+    if r in {"BB+", "BB", "BB-"}:
+        return "BB"
+    if r in {"B+", "B", "B-"}:
+        return "B"
+    return "CCC_down"
 
 
-def ks_statistic(y, p):
-    order = np.argsort(p)
-    y = np.asarray(y)[order]
-    n_bad = y.sum()
-    n_good = len(y) - n_bad
-    if n_bad == 0 or n_good == 0:
-        return 0.0
-    cdf_bad = np.cumsum(y) / n_bad
-    cdf_good = np.cumsum(1 - y) / n_good
-    return float(np.max(np.abs(cdf_bad - cdf_good)))
+def winsorize_fit(train: pd.DataFrame):
+    bounds = {}
+    for col in RATIO_COLS:
+        lo, hi = np.nanpercentile(train[col].astype(float), [1, 99])
+        bounds[col] = (float(lo), float(hi))
+    return bounds
+
+
+def winsorize_apply(frame: pd.DataFrame, bounds):
+    out = frame.copy()
+    for col, (lo, hi) in bounds.items():
+        out[col] = out[col].astype(float).clip(lo, hi)
+    return out
+
+
+def adjacent_accuracy(y_true, y_pred):
+    idx = {n: i for i, n in enumerate(NOTCHES)}
+    yt = np.array([idx[v] for v in y_true])
+    yp = np.array([idx[v] for v in y_pred])
+    return float(np.mean(np.abs(yt - yp) <= 1))
+
+
+def direction(value, median, higher_is_stronger):
+    if pd.isna(value) or pd.isna(median):
+        return "in line with"
+    if abs(value - median) / (abs(median) + 1e-6) < 0.08:
+        return "in line with"
+    stronger = value > median if higher_is_stronger else value < median
+    return "stronger than" if stronger else "weaker than"
+
+
+HIGHER_IS_STRONGER = {
+    "debt_to_equity": False,
+    "interest_coverage": True,
+    "debt_to_ebitda": False,
+    "current_ratio": True,
+    "net_margin": True,
+    "roa": True,
+    "log_assets": True,
+}
+
+
+def committee_note(row, grade, proba, sector_medians, drivers):
+    lines = [
+        f"{row['name']} ({row['ticker']}), {row['sector']}.",
+        f"Financial-risk notch: {NOTCH_LABEL[grade]} (model confidence {proba:.0%}).",
+        "This is not a credit rating. It is a triage grade from published financial ratios.",
+        "Versus the sector median:",
+    ]
+    for col in drivers:
+        role = RATIO_ROLE[col]
+        val = float(row[col])
+        med = float(sector_medians.loc[row["sector"], col])
+        d = direction(val, med, HIGHER_IS_STRONGER[col])
+        lines.append(f"- {role}: {val:.2f}, {d} the {row['sector']} median of {med:.2f}.")
+    lines.append(GAPS)
+    return "\n".join(lines)
 
 
 def main():
-    df = pd.read_csv(DATA, sep=r"\s+", header=None, names=COLS)
-    # UCI coding: 1 = good obligor, 2 = bad obligor. Model the bad class as default.
-    df["default"] = (df["label"] == 2).astype(int)
-    y = df["default"].to_numpy()
-    X = df.drop(columns=["label", "default"])
+    df = pd.read_csv(DATA)
+    df["notch"] = df["rating"].map(to_major)
+    y = df["notch"]
+    X = df[["sector"] + RATIO_COLS].copy()
 
-    num = ["duration_months", "credit_amount", "installment_rate", "residence_since", "age_years", "existing_credits", "dependents"]
-    cat = [c for c in X.columns if c not in num]
+    X_train, X_test, y_train, y_test, df_train, df_test = train_test_split(
+        X, y, df, test_size=0.25, random_state=7, stratify=y
+    )
+    bounds = winsorize_fit(X_train)
+    X_train = winsorize_apply(X_train, bounds)
+    X_test = winsorize_apply(X_test, bounds)
 
     pre = ColumnTransformer(
         [
-            ("num", StandardScaler(), num),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), cat),
+            ("sector", OneHotEncoder(handle_unknown="ignore"), ["sector"]),
+            ("ratios", "passthrough", RATIO_COLS),
         ]
     )
-    base = XGBClassifier(
-        n_estimators=300,
+    clf = XGBClassifier(
+        n_estimators=400,
         max_depth=3,
         learning_rate=0.05,
+        min_child_weight=3,
         subsample=0.9,
         colsample_bytree=0.9,
-        min_child_weight=4,
-        reg_lambda=1.0,
-        objective="binary:logistic",
-        eval_metric="logloss",
+        objective="multi:softprob",
+        num_class=len(NOTCHES),
+        eval_metric="mlogloss",
         random_state=7,
         n_jobs=1,
     )
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.25, random_state=7, stratify=y
-    )
-    X_fit, X_cal, y_fit, y_cal = train_test_split(
-        X_train, y_train, test_size=0.25, random_state=7, stratify=y_train
-    )
-    pipe = Pipeline([("pre", pre), ("model", base)])
-    pipe.fit(X_fit, y_fit)
-    calibrated = CalibratedClassifierCV(pipe, method="sigmoid", cv="prefit")
-    calibrated.fit(X_cal, y_cal)
+    pipe = Pipeline([("pre", pre), ("model", clf)])
+    label_to_i = {n: i for i, n in enumerate(NOTCHES)}
+    i_to_label = {i: n for n, i in label_to_i.items()}
+    pipe.fit(X_train, y_train.map(label_to_i))
 
-    cal_pd = calibrated.predict_proba(X_cal)[:, 1]
-    cuts = [float(x) for x in np.quantile(cal_pd, np.linspace(0.125, 0.875, 7))]
-    pd_hat = calibrated.predict_proba(X_test)[:, 1]
-    auc = float(roc_auc_score(y_test, pd_hat))
-    ks = ks_statistic(y_test, pd_hat)
-    brier = float(brier_score_loss(y_test, pd_hat))
-    gini = 2 * auc - 1
+    proba = pipe.predict_proba(X_test)
+    pred_i = proba.argmax(axis=1)
+    pred = [i_to_label[i] for i in pred_i]
+    y_true = y_test.tolist()
+    conf = proba.max(axis=1)
 
-    grades = [grade_from_pd(float(p), cuts) for p in pd_hat]
-    dist = pd.Series(grades).value_counts().to_dict()
-    dist = {g: int(dist.get(g, 0)) for g in NOTCHES}
+    exact = float(accuracy_score(y_true, pred))
+    adjacent = adjacent_accuracy(y_true, pred)
+    bal = float(balanced_accuracy_score(y_true, pred))
+    macro_f1 = float(f1_score(y_true, pred, average="macro", labels=NOTCHES, zero_division=0))
 
-    # Permutation importance on the uncalibrated pipeline, holdout, default-class AUC drop.
     rng = np.random.default_rng(7)
-    base_auc = roc_auc_score(y_test, pipe.predict_proba(X_test)[:, 1])
+    base = exact
     drops = {}
-    for col in ["checking_status", "duration_months", "credit_history", "credit_amount", "savings", "employment_since", "installment_rate", "property", "age_years"]:
+    for col in RATIO_COLS + ["sector"]:
         Xp = X_test.copy()
         Xp[col] = rng.permutation(Xp[col].to_numpy())
-        auc_p = roc_auc_score(y_test, pipe.predict_proba(Xp)[:, 1])
-        drops[col] = round(float(base_auc - auc_p), 4)
-    drivers = sorted(drops.items(), key=lambda kv: kv[1], reverse=True)
+        pred_p = [i_to_label[i] for i in pipe.predict(Xp)]
+        drops[col] = round(float(base - accuracy_score(y_true, pred_p)), 4)
+    drivers = [c for c, _ in sorted(drops.items(), key=lambda kv: kv[1], reverse=True) if c in RATIO_COLS][:4]
 
-    scored = X_test.copy()
-    scored["probability_of_default"] = np.round(pd_hat, 4)
-    scored["internal_grade"] = grades
-    scored["actual_default"] = y_test
-    scored.to_csv(ROOT / "reports" / "holdout_grades.csv", index=False)
+    medians = X_train.groupby(df_train["sector"])[RATIO_COLS].median()
+
+    notes = []
+    holdout = df_test.copy()
+    holdout["predicted_notch"] = pred
+    holdout["confidence"] = np.round(conf, 4)
+    holdout["actual_notch"] = y_true
+    # One note per predicted notch, preferring a correct call so the sample is readable.
+    for notch in NOTCHES:
+        pool = holdout[(holdout["predicted_notch"] == notch) & (holdout["actual_notch"] == notch)]
+        if pool.empty:
+            pool = holdout[holdout["predicted_notch"] == notch]
+        if pool.empty:
+            continue
+        row = pool.iloc[0]
+        src = X_test.loc[row.name]
+        src = src.copy()
+        src["name"] = row["name"]
+        src["ticker"] = row["ticker"]
+        src["sector"] = row["sector"]
+        notes.append(committee_note(src, notch, float(row["confidence"]), medians, drivers[:3]))
+
+    (REPORTS / "sample_committee_notes.txt").write_text("\n\n".join(notes), encoding="utf-8")
+    holdout.to_csv(REPORTS / "holdout_issuer_grades.csv", index=False)
 
     metrics = {
-        "dataset": "UCI Statlog German Credit (1,000 obligors)",
+        "dataset": "447 corporate issuers, one row each, public letter rating plus financial ratios",
+        "source_file": "data/credit_rating_training_data.csv",
+        "what_it_covers": [
+            "capital structure (debt/equity)",
+            "interest coverage",
+            "debt/EBITDA",
+            "current ratio",
+            "profitability (net margin)",
+            "return (ROA as a RoCE stand-in)",
+            "scale (log assets)",
+            "industry via sector",
+        ],
+        "what_it_does_not_cover": [
+            "debt service coverage",
+            "net cash accrual to total debt",
+            "net worth",
+            "parent or group support",
+            "management risk",
+            "project risk",
+            "accounting quality",
+        ],
         "holdout": "25% stratified",
-        "model": "XGBoost + Platt (sigmoid) calibration",
-        "notch_cuts_from_calibration_pd": [round(c, 4) for c in cuts],
-        "auc": round(auc, 4),
-        "gini": round(gini, 4),
-        "ks": round(ks, 4),
-        "brier": round(brier, 4),
-        "default_rate_holdout": round(float(y_test.mean()), 4),
-        "grade_distribution_holdout": dist,
-        "top_drivers_auc_drop": drivers[:5],
-        "note": "Internal grades are PD bands for research triage. They are not a credit rating.",
+        "model": "XGBoost multiclass on six major notches",
+        "exact_accuracy": round(exact, 4),
+        "adjacent_notch_accuracy": round(adjacent, 4),
+        "balanced_accuracy": round(bal, 4),
+        "macro_f1": round(macro_f1, 4),
+        "driver_exact_accuracy_drop": drops,
+        "note": "Financial-risk triage only. Not an agency rating.",
     }
-    OUT.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (REPORTS / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
 
 

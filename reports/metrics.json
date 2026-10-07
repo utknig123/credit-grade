@@ -1,52 +1,40 @@
 {
-  "dataset": "UCI Statlog German Credit (1,000 obligors)",
+  "dataset": "447 corporate issuers, one row each, public letter rating plus financial ratios",
+  "source_file": "data/credit_rating_training_data.csv",
+  "what_it_covers": [
+    "capital structure (debt/equity)",
+    "interest coverage",
+    "debt/EBITDA",
+    "current ratio",
+    "profitability (net margin)",
+    "return (ROA as a RoCE stand-in)",
+    "scale (log assets)",
+    "industry via sector"
+  ],
+  "what_it_does_not_cover": [
+    "debt service coverage",
+    "net cash accrual to total debt",
+    "net worth",
+    "parent or group support",
+    "management risk",
+    "project risk",
+    "accounting quality"
+  ],
   "holdout": "25% stratified",
-  "model": "XGBoost + Platt (sigmoid) calibration",
-  "notch_cuts_from_calibration_pd": [
-    0.1336,
-    0.1509,
-    0.1778,
-    0.2253,
-    0.2943,
-    0.4022,
-    0.5306
-  ],
-  "auc": 0.7798,
-  "gini": 0.5596,
-  "ks": 0.4438,
-  "brier": 0.1729,
-  "default_rate_holdout": 0.3,
-  "grade_distribution_holdout": {
-    "AAA": 27,
-    "AA": 26,
-    "A": 33,
-    "BBB": 25,
-    "BB": 37,
-    "B": 28,
-    "CCC": 30,
-    "D": 44
+  "model": "XGBoost multiclass on six major notches",
+  "exact_accuracy": 0.6071,
+  "adjacent_notch_accuracy": 0.8839,
+  "balanced_accuracy": 0.588,
+  "macro_f1": 0.6155,
+  "driver_exact_accuracy_drop": {
+    "debt_to_equity": 0.0357,
+    "interest_coverage": 0.0268,
+    "debt_to_ebitda": 0.0089,
+    "current_ratio": 0.0179,
+    "net_margin": 0.0982,
+    "roa": 0.0536,
+    "log_assets": 0.1875,
+    "sector": 0.1696
   },
-  "top_drivers_auc_drop": [
-    [
-      "checking_status",
-      0.0744
-    ],
-    [
-      "duration_months",
-      0.0488
-    ],
-    [
-      "credit_amount",
-      0.0206
-    ],
-    [
-      "property",
-      0.0107
-    ],
-    [
-      "credit_history",
-      0.0062
-    ]
-  ],
-  "note": "Internal grades are PD bands for research triage. They are not a credit rating."
+  "note": "Financial-risk triage only. Not an agency rating."
 }

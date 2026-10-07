@@ -1,25 +1,46 @@
 # Credit Grade
 
-Probability-of-default model with an eight-notch internal grade scale for research triage.
+Financial-risk triage for a ratings-style research desk.
 
-The grades (AAA through D) are rank bands on calibrated default probability. They are an internal score for an analyst queue. They are not a credit rating and they are not a CRISIL, S&P, or Moody's opinion.
+CRISIL Ratings scores an issuer on business risk, financial risk, management risk and project risk, then adjusts for parent or group support. The financial-risk leg is ratio work, not a mechanical score. This project covers that leg only.
 
-## Data
+## What it uses
 
-UCI Statlog German Credit: 1,000 obligors, 20 account and credit attributes, good/bad outcome.
-Source: [UCI ML Repository, dataset 144](https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data).
-The file `data/german.data` is the original UCI extract.
+447 corporate issuers. Each row has a public letter rating and:
 
-Bad obligors (UCI label 2) are the default class. The published base default rate is 30%.
+| Column | Ratings-desk meaning |
+| --- | --- |
+| debt/equity | Capital structure (gearing) |
+| interest coverage | Ability to pay interest from earnings |
+| debt/EBITDA | Debt burden against operating earnings |
+| current ratio | Liquidity |
+| net margin | Profitability |
+| ROA | Return. A stand-in for RoCE, which this file does not contain |
+| log assets | Scale |
+| sector | Industry risk |
+
+## What it refuses to pretend
+
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Neither are parent support, management, project risk or accounting quality. Every committee note says so. The output is not a CRISIL, S&P or Moody's rating.
 
 ## Model
 
-- Stratified holdout, 25%.
-- Fit XGBoost on 75% of the training split.
-- Platt (sigmoid) calibration on the remaining 25% of the training split (`CalibratedClassifierCV`, `cv="prefit"`).
-- Holdout is untouched until scoring.
-- Notch cuts are the calibration-set PD quantiles, frozen before the holdout is graded.
-- Drivers are holdout AUC drop under permutation of one column at a time.
+XGBoost, six major notches (plus and minus modifiers folded in). Extremes are grouped: AAA with AA, and CCC with D, because those buckets are too thin to split.
+
+Holdout is 25% and stratified. Ratios are winsorised at the 1st and 99th percentile of the training fold only.
+
+The note generator does not call an LLM. It writes from the model's notch, its confidence, and the issuer's ratios against the sector median. A ratings desk would rather have a sourced sentence than a fluent one.
+
+## Latest holdout (seed 7)
+
+| Metric | Value |
+| --- | --- |
+| Exact notch | 60.7% |
+| Within one notch | 88.4% |
+| Balanced accuracy | 58.8% |
+| Macro F1 | 0.62 |
+
+Largest accuracy drops when a column is shuffled: scale, sector, profitability, return, gearing.
 
 ## Run
 
@@ -28,15 +49,4 @@ pip install -r requirements.txt
 python src/train.py
 ```
 
-Writes `reports/metrics.json` and `reports/holdout_grades.csv`.
-
-## Latest holdout (seed 7)
-
-| Metric | Value |
-| --- | --- |
-| AUC | 0.780 |
-| Gini | 0.560 |
-| KS | 0.444 |
-| Brier | 0.173 |
-
-Strongest drivers on this split: checking-account status, loan duration, credit amount, property, credit history.
+Writes `reports/metrics.json`, `reports/holdout_issuer_grades.csv` and `reports/sample_committee_notes.txt`.

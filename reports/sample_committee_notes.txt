@@ -1,0 +1,53 @@
+Abbott Labs (ABT), Healthcare.
+Financial-risk notch: AA and above (model confidence 87%).
+This is not a credit rating. It is a triage grade from published financial ratios.
+Versus the sector median:
+- scale: 10.91, in line with the Healthcare median of 10.61.
+- profitability: 0.32, stronger than the Healthcare median of 0.12.
+- return on assets (stand-in for RoCE): 0.16, stronger than the Healthcare median of 0.05.
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Parent or group support, management risk, project risk and accounting quality are outside this model. CRISIL Ratings does not assign a rating from ratios alone.
+
+UPS (UPS), Industrials.
+Financial-risk notch: A (model confidence 84%).
+This is not a credit rating. It is a triage grade from published financial ratios.
+Versus the sector median:
+- scale: 10.85, in line with the Industrials median of 10.47.
+- profitability: 0.06, weaker than the Industrials median of 0.09.
+- return on assets (stand-in for RoCE): 0.08, stronger than the Industrials median of 0.05.
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Parent or group support, management risk, project risk and accounting quality are outside this model. CRISIL Ratings does not assign a rating from ratios alone.
+
+Ross Stores (ROST), Consumer Discretionary.
+Financial-risk notch: BBB (model confidence 71%).
+This is not a credit rating. It is a triage grade from published financial ratios.
+Versus the sector median:
+- scale: 10.17, in line with the Consumer Discretionary median of 9.91.
+- profitability: 0.10, stronger than the Consumer Discretionary median of 0.07.
+- return on assets (stand-in for RoCE): 0.14, stronger than the Consumer Discretionary median of 0.07.
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Parent or group support, management risk, project risk and accounting quality are outside this model. CRISIL Ratings does not assign a rating from ratios alone.
+
+Kohls (KSS), Consumer Discretionary.
+Financial-risk notch: BB (model confidence 48%).
+This is not a credit rating. It is a triage grade from published financial ratios.
+Versus the sector median:
+- scale: 10.13, in line with the Consumer Discretionary median of 9.91.
+- profitability: 0.01, weaker than the Consumer Discretionary median of 0.07.
+- return on assets (stand-in for RoCE): 0.01, weaker than the Consumer Discretionary median of 0.07.
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Parent or group support, management risk, project risk and accounting quality are outside this model. CRISIL Ratings does not assign a rating from ratios alone.
+
+Transocean (RIG), Energy.
+Financial-risk notch: B (model confidence 58%).
+This is not a credit rating. It is a triage grade from published financial ratios.
+Versus the sector median:
+- scale: 10.29, in line with the Energy median of 10.45.
+- profitability: -0.15, weaker than the Energy median of 0.11.
+- return on assets (stand-in for RoCE): -0.03, weaker than the Energy median of 0.06.
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Parent or group support, management risk, project risk and accounting quality are outside this model. CRISIL Ratings does not assign a rating from ratios alone.
+
+Peloton (PTON), Consumer Discretionary.
+Financial-risk notch: CCC and below (model confidence 50%).
+This is not a credit rating. It is a triage grade from published financial ratios.
+Versus the sector median:
+- scale: 9.33, in line with the Consumer Discretionary median of 9.91.
+- profitability: -0.05, weaker than the Consumer Discretionary median of 0.07.
+- return on assets (stand-in for RoCE): -0.06, weaker than the Consumer Discretionary median of 0.07.
+Debt service coverage, net cash accrual to total debt, and net worth are not in the file. Parent or group support, management risk, project risk and accounting quality are outside this model. CRISIL Ratings does not assign a rating from ratios alone.
